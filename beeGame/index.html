@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#eef0dc" />
+    <meta name="description" content="A small, relaxing honeybee foraging game." />
+    <title>Meadow Forager</title>
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <a class="wordmark" href="#" aria-label="Meadow Forager home">
+          <span class="brand-mark" aria-hidden="true">✳</span>
+          <span>meadow<span class="wordmark-light">forager</span></span>
+        </a>
+        <div class="topbar-right">
+          <span class="season-tag"><span class="season-dot"></span> Field notes <span id="day-count">01</span></span>
+          <button class="button button-quiet" id="pause-button" type="button" aria-pressed="false">Pause</button>
+          <button class="button button-dark" id="restart-button" type="button">New run</button>
+        </div>
+      </header>
+
+      <section class="vitals" aria-label="Bee status">
+        <div class="vital">
+          <div class="vital-heading"><span>HEALTH</span><strong id="health-value">100%</strong></div>
+          <div class="meter"><span class="meter-fill health-fill" id="health-fill"></span></div>
+        </div>
+        <div class="vital pollen-vital">
+          <div class="vital-heading"><span>POLLEN SACK</span><strong id="pollen-value">0 / 100</strong></div>
+          <div class="meter"><span class="meter-fill pollen-fill" id="pollen-fill"></span></div>
+        </div>
+        <div class="vital run-vital">
+          <span class="eyebrow">THIS FORAGE</span>
+          <strong><span id="trip-count">0</span> <small>returns</small></strong>
+        </div>
+      </section>
+
+      <main class="play-layout">
+        <section class="game-column" aria-label="Meadow game">
+          <div class="game-frame">
+            <div id="game" aria-label="Game field"></div>
+            <div class="field-stamp"><span class="stamp-dot"></span> MEADOW 01 <span class="stamp-divider">/</span> LIVE FIELD</div>
+          </div>
+          <div class="field-status" aria-live="polite">
+            <span class="status-indicator" id="status-indicator"></span>
+            <span id="game-status">Explore the meadow</span>
+            <span class="status-coordinate" id="run-time">00:00</span>
+          </div>
+        </section>
+
+        <aside class="field-sidebar" aria-label="Hive report">
+          <div class="hive-report">
+            <div class="eyebrow">HIVE STORES</div>
+            <div class="storage-number" id="hive-storage">0</div>
+            <div class="storage-unit">pollen grains</div>
+            <div class="storage-rule"><span></span></div>
+            <div class="report-row"><span>Flowers emptied</span><strong id="flowers-count">0</strong></div>
+            <div class="report-row"><span>Foraging trips</span><strong id="returns-count">0</strong></div>
+            <div class="report-row"><span>Deaths</span><strong id="deaths-count">0</strong></div>
+          </div>
+          <div class="field-key">
+            <div class="eyebrow">FIELD KEY</div>
+            <div class="key-row"><span class="key-flower"></span><span>Flower patch</span></div>
+            <div class="key-row"><span class="key-danger"></span><span>Contaminated ground</span></div>
+            <div class="key-row"><span class="key-hive"></span><span>Your hive</span></div>
+          </div>
+          <div class="sidebar-note"><span class="note-sun">✳</span><span>Return to the hive to bank each harvest.</span></div>
+        </aside>
+      </main>
+
+      <footer class="bottomline">
+        <span>Move with <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> or <kbd>↑</kbd><kbd>←</kbd><kbd>↓</kbd><kbd>→</kbd></span>
+        <span>Touch and drag to fly</span>
+      </footer>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

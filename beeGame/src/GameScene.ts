@@ -1,5 +1,17 @@
 import Phaser from 'phaser';
 
+const BEE_FRAME_PATHS = [
+  './assets/sprites/bee/bee_fly_n_0001.png',
+  './assets/sprites/bee/bee_fly_n_0002.png',
+  './assets/sprites/bee/bee_fly_n_0003.png',
+  './assets/sprites/bee/bee_fly_n_0004.png',
+] as const;
+const BEE_SPRITE_ASSETS = import.meta.glob<string>('./assets/sprites/bee/bee_fly_n_*.png', {
+  eager: true,
+  query: '?url',
+  import: 'default',
+});
+
 const CHUNK_WIDTH = 1600;
 const CHUNK_HEIGHT = 1000;
 const HIVE = { x: 800, y: 500, radius: 58 };
@@ -32,7 +44,8 @@ const byId = <T extends HTMLElement>(id: string): T => {
 };
 
 export class GameScene extends Phaser.Scene {
-  private bee!: Phaser.Physics.Arcade.Image;
+  private bee!: Phaser.Physics.Arcade.Sprite;
+  private beeAnimationAvailable = false;
   private keys!: Record<'up' | 'down' | 'left' | 'right' | 'w' | 'a' | 's' | 'd', Phaser.Input.Keyboard.Key>;
   private flowers: FlowerNode[] = [];
   private dangerZones: DangerZone[] = [];
@@ -67,6 +80,15 @@ export class GameScene extends Phaser.Scene {
     super('GameScene');
   }
 
+  preload(): void {
+    this.beeAnimationAvailable = BEE_FRAME_PATHS.every((path) => typeof BEE_SPRITE_ASSETS[path] === 'string');
+    if (!this.beeAnimationAvailable) return;
+
+    BEE_FRAME_PATHS.forEach((path, index) => {
+      this.load.image(`bee-fly-${index}`, BEE_SPRITE_ASSETS[path]);
+    });
+  }
+
   create(): void {
     this.pollen = 0;
     this.health = 100;
@@ -86,6 +108,14 @@ export class GameScene extends Phaser.Scene {
     this.moveTarget = null;
 
     this.createTextures();
+    if (this.beeAnimationAvailable && !this.anims.exists('bee-flight')) {
+      this.anims.create({
+        key: 'bee-flight',
+        frames: BEE_FRAME_PATHS.map((_, index) => ({ key: `bee-fly-${index}` })),
+        frameRate: 10,
+        repeat: -1,
+      });
+    }
     this.drawDangerZones();
     this.add.image(HIVE.x, HIVE.y, 'hive').setDepth(2);
     this.add.text(HIVE.x, HIVE.y + 48, 'HOME', {
@@ -100,7 +130,14 @@ export class GameScene extends Phaser.Scene {
     });
 
     this.physics.world.setBounds(0, 0, CHUNK_WIDTH, CHUNK_HEIGHT);
-    this.bee = this.physics.add.image(HIVE.x, HIVE.y - 2, 'bee').setDepth(5);
+    this.bee = this.physics.add.sprite(
+      HIVE.x,
+      HIVE.y - 2,
+      this.beeAnimationAvailable ? 'bee-fly-0' : 'bee',
+    ).setDepth(5);
+    if (this.beeAnimationAvailable) {
+      this.bee.setDisplaySize(32, 32).play('bee-flight');
+    }
     this.bee.setCircle(13, 11, 9);
     this.bee.setCollideWorldBounds(true);
     this.updateTerrainChunks();
@@ -173,8 +210,10 @@ export class GameScene extends Phaser.Scene {
     } else {
       this.bee.setVelocity(0, 0);
     }
-    const wingBeat = Math.sin(this.time.now / 44) * 0.035;
-    this.bee.setScale(1 + wingBeat, 1 - wingBeat);
+    if (!this.beeAnimationAvailable) {
+      const wingBeat = Math.sin(this.time.now / 44) * 0.035;
+      this.bee.setScale(1 + wingBeat, 1 - wingBeat);
+    }
   }
 
   private updateFlowers(delta: number): void {
@@ -406,19 +445,21 @@ export class GameScene extends Phaser.Scene {
   }
 
   private createTextures(): void {
-    const bee = this.make.graphics({ x: 0, y: 0 }, false);
-    bee.fillStyle(0xf3e4bd).fillEllipse(13, 10, 16, 27);
-    bee.fillStyle(0xc9d8c7, 0.9).fillEllipse(5, 8, 10, 17);
-    bee.fillStyle(0xc9d8c7, 0.9).fillEllipse(21, 8, 10, 17);
-    bee.fillStyle(0x343b30).fillEllipse(13, 19, 14, 15);
-    bee.fillStyle(0xf0b744).fillEllipse(13, 11, 15, 19);
-    bee.fillStyle(0x343b30).fillRect(6, 9, 14, 3);
-    bee.fillStyle(0x343b30).fillRect(7, 16, 12, 3);
-    bee.fillStyle(0x292d27).fillCircle(13, 3, 5);
-    bee.fillStyle(0x292d27).fillCircle(11, 2, 1);
-    bee.fillStyle(0x292d27).fillCircle(15, 2, 1);
-    bee.generateTexture('bee', 26, 32);
-    bee.destroy();
+    if (!this.beeAnimationAvailable) {
+      const bee = this.make.graphics({ x: 0, y: 0 }, false);
+      bee.fillStyle(0xf3e4bd).fillEllipse(13, 10, 16, 27);
+      bee.fillStyle(0xc9d8c7, 0.9).fillEllipse(5, 8, 10, 17);
+      bee.fillStyle(0xc9d8c7, 0.9).fillEllipse(21, 8, 10, 17);
+      bee.fillStyle(0x343b30).fillEllipse(13, 19, 14, 15);
+      bee.fillStyle(0xf0b744).fillEllipse(13, 11, 15, 19);
+      bee.fillStyle(0x343b30).fillRect(6, 9, 14, 3);
+      bee.fillStyle(0x343b30).fillRect(7, 16, 12, 3);
+      bee.fillStyle(0x292d27).fillCircle(13, 3, 5);
+      bee.fillStyle(0x292d27).fillCircle(11, 2, 1);
+      bee.fillStyle(0x292d27).fillCircle(15, 2, 1);
+      bee.generateTexture('bee', 26, 32);
+      bee.destroy();
+    }
 
     const hive = this.make.graphics({ x: 0, y: 0 }, false);
     hive.fillStyle(0x304b3a, 0.2).fillEllipse(35, 45, 62, 18);

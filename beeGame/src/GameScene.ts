@@ -1,10 +1,31 @@
 import Phaser from 'phaser';
 
-const WORLD_WIDTH = 1600;
-const WORLD_HEIGHT = 1000;
+const BEE_FRAME_PATHS = [
+  './assets/sprites/bee/bee_fly_n_0001.png',
+  './assets/sprites/bee/bee_fly_n_0002.png',
+  './assets/sprites/bee/bee_fly_n_0003.png',
+  './assets/sprites/bee/bee_fly_n_0004.png',
+] as const;
+const BEE_SPRITE_ASSETS = import.meta.glob<string>('./assets/sprites/bee/bee_fly_n_*.png', {
+  eager: true,
+  query: '?url',
+  import: 'default',
+});
+
+const CHUNK_WIDTH = 1600;
+const CHUNK_HEIGHT = 1000;
 const HIVE = { x: 800, y: 500, radius: 58 };
 const CAPACITY = 100;
 const BEE_SPEED = 245;
+const FLOWER_COUNT = 24;
+const FLOWER_MIN_DISTANCE = 88;
+const FLOWER_EDGE_PADDING = 40;
+const FLOWER_HIVE_CLEARANCE = 90;
+const DANGER_ZONE_COUNT = 3;
+const DANGER_ZONE_MIN_RADIUS = 85;
+const DANGER_ZONE_MAX_RADIUS = 110;
+const DANGER_ZONE_GAP = 70;
+const MAX_PLACEMENT_ATTEMPTS = 1000;
 
 type FlowerNode = {
   sprite: Phaser.GameObjects.Image;
@@ -14,20 +35,7 @@ type FlowerNode = {
 };
 
 type DangerZone = { x: number; y: number; radius: number };
-
-const flowersAt = [
-  [350, 245], [445, 310], [540, 205], [615, 345], [300, 430],
-  [1160, 235], [1265, 310], [1370, 220], [1210, 425], [1410, 460],
-  [280, 710], [400, 790], [515, 700], [640, 820], [1320, 710],
-  [1190, 820], [1040, 730], [930, 300], [720, 650], [1010, 570],
-  [500, 540], [1080, 420], [760, 180], [900, 850],
-];
-
-const dangerZones: DangerZone[] = [
-  { x: 505, y: 300, radius: 92 },
-  { x: 1265, y: 390, radius: 105 },
-  { x: 1115, y: 755, radius: 92 },
-];
+type TerrainChunk = { x: number; y: number; graphics: Phaser.GameObjects.Graphics[] };
 
 const byId = <T extends HTMLElement>(id: string): T => {
   const element = document.getElementById(id);
@@ -36,9 +44,14 @@ const byId = <T extends HTMLElement>(id: string): T => {
 };
 
 export class GameScene extends Phaser.Scene {
-  private bee!: Phaser.Physics.Arcade.Image;
+  private bee!: Phaser.Physics.Arcade.Sprite;
+  private beeAnimationAvailable = false;
   private keys!: Record<'up' | 'down' | 'left' | 'right' | 'w' | 'a' | 's' | 'd', Phaser.Input.Keyboard.Key>;
   private flowers: FlowerNode[] = [];
+  private dangerZones: DangerZone[] = [];
+  private terrainChunks = new Map<string, TerrainChunk>();
+  private currentChunkX: number | null = null;
+  private currentChunkY: number | null = null;
   private moveTarget: Phaser.Math.Vector2 | null = null;
   private pollen = 0;
   private health = 100;
@@ -67,6 +80,15 @@ export class GameScene extends Phaser.Scene {
     super('GameScene');
   }
 
+  preload(): void {
+    this.beeAnimationAvailable = BEE_FRAME_PATHS.every((path) => typeof BEE_SPRITE_ASSETS[path] === 'string');
+    if (!this.beeAnimationAvailable) return;
+
+    BEE_FRAME_PATHS.forEach((path, index) => {
+      this.load.image(`bee-fly-${index}`, BEE_SPRITE_ASSETS[path]);
+    });
+  }
+
   create(): void {
     this.pollen = 0;
     this.health = 100;
@@ -79,10 +101,21 @@ export class GameScene extends Phaser.Scene {
     this.noticeUntil = 0;
     this.notice = '';
     this.flowers = [];
+    this.dangerZones = this.generateDangerZones();
+    this.terrainChunks.clear();
+    this.currentChunkX = null;
+    this.currentChunkY = null;
     this.moveTarget = null;
 
-    this.drawMeadow();
     this.createTextures();
+    if (this.beeAnimationAvailable && !this.anims.exists('bee-flight')) {
+      this.anims.create({
+        key: 'bee-flight',
+        frames: BEE_FRAME_PATHS.map((_, index) => ({ key: `bee-fly-${index}` })),
+        frameRate: 10,
+        repeat: -1,
+      });
+    }
     this.drawDangerZones();
     this.add.image(HIVE.x, HIVE.y, 'hive').setDepth(2);
     this.add.text(HIVE.x, HIVE.y + 48, 'HOME', {
@@ -90,17 +123,24 @@ export class GameScene extends Phaser.Scene {
       fontStyle: 'bold', backgroundColor: '#f2e7bd', padding: { x: 7, y: 4 },
     }).setOrigin(0.5).setDepth(3);
 
-    flowersAt.forEach(([x, y], index) => {
+    this.generateFlowerPositions().forEach(([x, y], index) => {
       const pollen = 30 + ((index * 17) % 31);
       const sprite = this.add.image(x, y, `flower-${index % 4}`).setDepth(3);
       this.flowers.push({ sprite, pollen, maxPollen: pollen, regrowAt: 0 });
     });
 
-    this.physics.world.setBounds(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
-    this.bee = this.physics.add.image(HIVE.x, HIVE.y - 2, 'bee').setDepth(5);
+    this.physics.world.setBounds(0, 0, CHUNK_WIDTH, CHUNK_HEIGHT);
+    this.bee = this.physics.add.sprite(
+      HIVE.x,
+      HIVE.y - 2,
+      this.beeAnimationAvailable ? 'bee-fly-0' : 'bee',
+    ).setDepth(5);
+    if (this.beeAnimationAvailable) {
+      this.bee.setDisplaySize(32, 32).play('bee-flight');
+    }
     this.bee.setCircle(13, 11, 9);
     this.bee.setCollideWorldBounds(true);
-    this.cameras.main.setBounds(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
+    this.updateTerrainChunks();
     this.cameras.main.startFollow(this.bee, true, 0.08, 0.08);
 
     const keyboard = this.input.keyboard;
@@ -137,6 +177,7 @@ export class GameScene extends Phaser.Scene {
     }
 
     this.moveBee();
+    this.updateTerrainChunks();
     this.updateFlowers(dt);
     this.updateDanger(dt);
     this.updateHive();
@@ -169,8 +210,10 @@ export class GameScene extends Phaser.Scene {
     } else {
       this.bee.setVelocity(0, 0);
     }
-    const wingBeat = Math.sin(this.time.now / 44) * 0.035;
-    this.bee.setScale(1 + wingBeat, 1 - wingBeat);
+    if (!this.beeAnimationAvailable) {
+      const wingBeat = Math.sin(this.time.now / 44) * 0.035;
+      this.bee.setScale(1 + wingBeat, 1 - wingBeat);
+    }
   }
 
   private updateFlowers(delta: number): void {
@@ -199,7 +242,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private updateDanger(delta: number): void {
-    const inDanger = dangerZones.some((zone) =>
+    const inDanger = this.dangerZones.some((zone) =>
       Phaser.Math.Distance.Between(this.bee.x, this.bee.y, zone.x, zone.y) < zone.radius,
     );
 
@@ -257,7 +300,7 @@ export class GameScene extends Phaser.Scene {
     const seconds = Math.floor(this.time.now / 1000);
     this.runTime.textContent = `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
 
-    const inDanger = dangerZones.some((zone) =>
+    const inDanger = this.dangerZones.some((zone) =>
       Phaser.Math.Distance.Between(this.bee.x, this.bee.y, zone.x, zone.y) < zone.radius,
     );
     const status = this.time.now < this.noticeUntil
@@ -276,39 +319,117 @@ export class GameScene extends Phaser.Scene {
     this.statusIndicator.classList.toggle('status-full', this.pollen >= CAPACITY);
   }
 
-  private drawMeadow(): void {
+  private generateDangerZones(): DangerZone[] {
+    const zones: DangerZone[] = [];
+    for (let index = 0; index < DANGER_ZONE_COUNT; index++) {
+      let placed = false;
+      for (let attempt = 0; attempt < MAX_PLACEMENT_ATTEMPTS && !placed; attempt++) {
+        const radius = Phaser.Math.Between(DANGER_ZONE_MIN_RADIUS, DANGER_ZONE_MAX_RADIUS);
+        const zone = {
+          x: Phaser.Math.Between(radius + 20, CHUNK_WIDTH - radius - 20),
+          y: Phaser.Math.Between(radius + 20, CHUNK_HEIGHT - radius - 20),
+          radius,
+        };
+        const clearOfHive = Phaser.Math.Distance.Between(zone.x, zone.y, HIVE.x, HIVE.y)
+          >= zone.radius + HIVE.radius + 80;
+        const clearOfZones = zones.every((other) =>
+          Phaser.Math.Distance.Between(zone.x, zone.y, other.x, other.y)
+            >= zone.radius + other.radius + DANGER_ZONE_GAP,
+        );
+        if (clearOfHive && clearOfZones) {
+          zones.push(zone);
+          placed = true;
+        }
+      }
+      if (!placed) throw new Error('Unable to place all danger zones.');
+    }
+    return zones;
+  }
+
+  private generateFlowerPositions(): number[][] {
+    const positions: number[][] = [];
+    for (let index = 0; index < FLOWER_COUNT; index++) {
+      let placed = false;
+      for (let attempt = 0; attempt < MAX_PLACEMENT_ATTEMPTS && !placed; attempt++) {
+        const x = Phaser.Math.Between(FLOWER_EDGE_PADDING, CHUNK_WIDTH - FLOWER_EDGE_PADDING);
+        const y = Phaser.Math.Between(FLOWER_EDGE_PADDING, CHUNK_HEIGHT - FLOWER_EDGE_PADDING);
+        const clearOfHive = Phaser.Math.Distance.Between(x, y, HIVE.x, HIVE.y)
+          >= HIVE.radius + FLOWER_HIVE_CLEARANCE;
+        const clearOfFlowers = positions.every(([otherX, otherY]) =>
+          Phaser.Math.Distance.Between(x, y, otherX, otherY) >= FLOWER_MIN_DISTANCE,
+        );
+        const clearOfDanger = this.dangerZones.every((zone) =>
+          Phaser.Math.Distance.Between(x, y, zone.x, zone.y) >= zone.radius + 45,
+        );
+        if (clearOfHive && clearOfFlowers && clearOfDanger) {
+          positions.push([x, y]);
+          placed = true;
+        }
+      }
+      if (!placed) throw new Error('Unable to place all flowers.');
+    }
+    return positions;
+  }
+
+  private updateTerrainChunks(): void {
+    const chunkX = Math.floor(this.bee.x / CHUNK_WIDTH);
+    const chunkY = Math.floor(this.bee.y / CHUNK_HEIGHT);
+    if (chunkX === this.currentChunkX && chunkY === this.currentChunkY) return;
+
+    this.currentChunkX = chunkX;
+    this.currentChunkY = chunkY;
+    for (let y = chunkY - 1; y <= chunkY + 1; y++) {
+      for (let x = chunkX - 1; x <= chunkX + 1; x++) {
+        const key = `${x},${y}`;
+        if (!this.terrainChunks.has(key)) {
+          this.terrainChunks.set(key, { x, y, graphics: this.drawMeadow(x, y) });
+        }
+      }
+    }
+
+    for (const [key, chunk] of this.terrainChunks) {
+      if (Math.abs(chunk.x - chunkX) > 1 || Math.abs(chunk.y - chunkY) > 1) {
+        chunk.graphics.forEach((layer) => layer.destroy());
+        this.terrainChunks.delete(key);
+      }
+    }
+
+    const boundsX = (chunkX - 1) * CHUNK_WIDTH;
+    const boundsY = (chunkY - 1) * CHUNK_HEIGHT;
+    this.physics.world.setBounds(boundsX, boundsY, CHUNK_WIDTH * 3, CHUNK_HEIGHT * 3);
+    this.cameras.main.setBounds(boundsX, boundsY, CHUNK_WIDTH * 3, CHUNK_HEIGHT * 3);
+  }
+
+  private drawMeadow(chunkX: number, chunkY: number): Phaser.GameObjects.Graphics[] {
+    const originX = chunkX * CHUNK_WIDTH;
+    const originY = chunkY * CHUNK_HEIGHT;
     const ground = this.add.graphics().setDepth(0);
-    ground.fillStyle(0x82976a).fillRect(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
+    ground.fillStyle(0x82976a).fillRect(originX, originY, CHUNK_WIDTH, CHUNK_HEIGHT);
     ground.fillStyle(0x718c60, 0.42);
     for (let index = 0; index < 125; index++) {
-      const x = (index * 197 + 83) % WORLD_WIDTH;
-      const y = (index * 113 + 41) % WORLD_HEIGHT;
+      const x = originX + Phaser.Math.Between(80, CHUNK_WIDTH - 80);
+      const y = originY + Phaser.Math.Between(80, CHUNK_HEIGHT - 80);
       ground.fillEllipse(x, y, 90 + (index % 4) * 17, 35 + (index % 3) * 12);
     }
     ground.lineStyle(46, 0xd4c590, 0.34);
     ground.beginPath();
-    ground.moveTo(150, 520);
-    ground.lineTo(500, 520);
-    ground.lineTo(675, 500);
-    ground.lineTo(800, 500);
-    ground.lineTo(1015, 515);
-    ground.lineTo(1450, 515);
+    ground.moveTo(originX, originY + CHUNK_HEIGHT / 2);
+    ground.lineTo(originX + CHUNK_WIDTH, originY + CHUNK_HEIGHT / 2);
     ground.strokePath();
-    ground.lineStyle(3, 0xf4e9c7, 0.26);
-    ground.strokeRect(18, 18, WORLD_WIDTH - 36, WORLD_HEIGHT - 36);
 
     const speckles = this.add.graphics().setDepth(1);
     for (let index = 0; index < 280; index++) {
-      const x = (index * 311 + 17) % WORLD_WIDTH;
-      const y = (index * 173 + 93) % WORLD_HEIGHT;
+      const x = originX + Phaser.Math.Between(0, CHUNK_WIDTH);
+      const y = originY + Phaser.Math.Between(0, CHUNK_HEIGHT);
       speckles.fillStyle(index % 3 === 0 ? 0xf2e9bd : 0x405f46, index % 3 === 0 ? 0.35 : 0.22);
       speckles.fillCircle(x, y, index % 5 === 0 ? 2.4 : 1.4);
     }
+    return [ground, speckles];
   }
 
   private drawDangerZones(): void {
     const graphics = this.add.graphics().setDepth(1);
-    for (const zone of dangerZones) {
+    for (const zone of this.dangerZones) {
       graphics.fillStyle(0xc87756, 0.32).fillCircle(zone.x, zone.y, zone.radius);
       graphics.lineStyle(3, 0xb8664d, 0.68).strokeCircle(zone.x, zone.y, zone.radius);
       graphics.lineStyle(1, 0xf4c18d, 0.56);
@@ -324,19 +445,21 @@ export class GameScene extends Phaser.Scene {
   }
 
   private createTextures(): void {
-    const bee = this.make.graphics({ x: 0, y: 0 }, false);
-    bee.fillStyle(0xf3e4bd).fillEllipse(13, 10, 16, 27);
-    bee.fillStyle(0xc9d8c7, 0.9).fillEllipse(5, 8, 10, 17);
-    bee.fillStyle(0xc9d8c7, 0.9).fillEllipse(21, 8, 10, 17);
-    bee.fillStyle(0x343b30).fillEllipse(13, 19, 14, 15);
-    bee.fillStyle(0xf0b744).fillEllipse(13, 11, 15, 19);
-    bee.fillStyle(0x343b30).fillRect(6, 9, 14, 3);
-    bee.fillStyle(0x343b30).fillRect(7, 16, 12, 3);
-    bee.fillStyle(0x292d27).fillCircle(13, 3, 5);
-    bee.fillStyle(0x292d27).fillCircle(11, 2, 1);
-    bee.fillStyle(0x292d27).fillCircle(15, 2, 1);
-    bee.generateTexture('bee', 26, 32);
-    bee.destroy();
+    if (!this.beeAnimationAvailable) {
+      const bee = this.make.graphics({ x: 0, y: 0 }, false);
+      bee.fillStyle(0xf3e4bd).fillEllipse(13, 10, 16, 27);
+      bee.fillStyle(0xc9d8c7, 0.9).fillEllipse(5, 8, 10, 17);
+      bee.fillStyle(0xc9d8c7, 0.9).fillEllipse(21, 8, 10, 17);
+      bee.fillStyle(0x343b30).fillEllipse(13, 19, 14, 15);
+      bee.fillStyle(0xf0b744).fillEllipse(13, 11, 15, 19);
+      bee.fillStyle(0x343b30).fillRect(6, 9, 14, 3);
+      bee.fillStyle(0x343b30).fillRect(7, 16, 12, 3);
+      bee.fillStyle(0x292d27).fillCircle(13, 3, 5);
+      bee.fillStyle(0x292d27).fillCircle(11, 2, 1);
+      bee.fillStyle(0x292d27).fillCircle(15, 2, 1);
+      bee.generateTexture('bee', 26, 32);
+      bee.destroy();
+    }
 
     const hive = this.make.graphics({ x: 0, y: 0 }, false);
     hive.fillStyle(0x304b3a, 0.2).fillEllipse(35, 45, 62, 18);
